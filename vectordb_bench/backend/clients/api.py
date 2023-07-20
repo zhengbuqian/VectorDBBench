@@ -189,3 +189,13 @@ class VectorDB(ABC):
         heavy load cases.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def search_multiple_embedding(
+        self,
+        query: list[list[float]],
+        k: int = 100,
+        filters: dict | None = None,
+        timeout: int | None = None,
+    ) -> list[list[int]]:
+        raise NotImplementedError

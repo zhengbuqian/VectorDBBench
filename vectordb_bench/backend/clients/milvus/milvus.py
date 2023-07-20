@@ -193,3 +193,26 @@ class Milvus(VectorDB):
         # Organize results.
         ret = [result.id for result in res[0]]
         return ret
+
+    def search_multiple_embedding(
+        self,
+        query: list[list[float]],
+        k: int = 100,
+        filters: dict | None = None,
+        timeout: int | None = None,
+    ) -> list[list[int]]:
+        assert self.col is not None
+        expr = f"{self._scalar_field} {filters.get('metadata')}" if filters else ""
+
+        # Perform the search.
+        res = self.col.search(
+            data=query,
+            anns_field=self._vector_field,
+            param=self.case_config.search_param(),
+            limit=k,
+            expr=expr,
+        )
+
+        # Organize results.
+        ret = [[result.id for result in single_res] for single_res in res]
+        return ret

@@ -28,8 +28,8 @@ class MultiProcessingSearchRunner:
         test_data: np.ndarray,
         k: int = 100,
         filters: dict | None = None,
-        concurrencies: Iterable[int] = (1, 5, 10, 15, 20, 25, 30, 35),
-        duration: int = 30,
+        concurrencies: Iterable[int] = [35], #20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 100
+        duration: int = 480,
     ):
         self.db = db
         self.k = k
@@ -48,15 +48,15 @@ class MultiProcessingSearchRunner:
 
         with self.db.init():
             test_data = test_np.read().tolist()
-            num, idx = len(test_data), 0
+            num, idx = len(test_data) / self.nq, 0
 
             start_time = time.perf_counter()
             count = 0
             while time.perf_counter() < start_time + self.duration:
                 s = time.perf_counter()
                 try:
-                    self.db.search_embedding(
-                        test_data[idx],
+                    self.db.search_multiple_embedding(
+                        test_data[idx:idx+self.nq],
                         self.k,
                         self.filters,
                     )
@@ -65,12 +65,15 @@ class MultiProcessingSearchRunner:
                     traceback.print_exc(chain=True)
                     raise e from None
 
-                count += 1
+                count += self.nq
                 # loop through the test data
-                idx = idx + 1 if idx < num - 1 else 0
+                idx = idx + self.nq if idx < num - self.nq else 0
 
                 if count % 500 == 0:
                     log.debug(f"({mp.current_process().name:16}) search_count: {count}, latest_latency={time.perf_counter()-s}")
+                # if count == 2000:
+                #     log.info(f"({mp.current_process().name:16}) search_count: {count}, latest_latency={time.perf_counter()-s}, ending now.")
+                #     break
 
         total_dur = round(time.perf_counter() - start_time, 4)
         log.info(
@@ -87,9 +90,12 @@ class MultiProcessingSearchRunner:
         return mp.get_context(mp_start_method)
 
     def _run_all_concurrencies_mem_efficient(self) -> float:
+        # return
         max_qps = 0
         try:
             for conc in self.concurrencies:
+                # self.nq = 32 // conc
+                self.nq = 1
                 with mp.Manager() as m:
                     q, cond = m.Queue(), m.Condition()
                     with concurrent.futures.ProcessPoolExecutor(mp_context=self.get_mp_context(), max_workers=conc) as executor:

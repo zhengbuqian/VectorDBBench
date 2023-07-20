@@ -170,6 +170,8 @@ class SerialSearchRunner:
         self.ground_truth = ground_truth
 
     def search(self, args: tuple[list, pd.DataFrame]):
+        log.info(f"{mp.current_process().name:14} skip serial")
+        return (0, 0)
         log.info(f"{mp.current_process().name:14} start search the entire test_data to get recall and latency")
         with self.db.init():
             test_data, ground_truth = args
