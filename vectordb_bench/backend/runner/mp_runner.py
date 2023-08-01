@@ -5,9 +5,11 @@ import multiprocessing as mp
 import logging
 from typing import Iterable
 import numpy as np
+import random
 from ..clients import api
 from .. import utils
 from ... import config
+from concurrent.futures import ThreadPoolExecutor
 
 
 NUM_PER_BATCH = config.NUM_PER_BATCH
@@ -29,7 +31,7 @@ class MultiProcessingSearchRunner:
         k: int = 100,
         filters: dict | None = None,
         concurrencies: Iterable[int] = [35], #20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 100
-        duration: int = 480,
+        duration: int = 3600,
     ):
         self.db = db
         self.k = k
@@ -38,9 +40,9 @@ class MultiProcessingSearchRunner:
         self.duration = duration
 
         self.test_data = utils.SharedNumpyArray(test_data)
-        log.debug(f"test dataset columns: {len(test_data)}")
+        log.info(f"test dataset columns: {len(test_data)}")
 
-    def search(self, test_np: utils.SharedNumpyArray, q: mp.Queue, cond: mp.Condition) -> tuple[int, float]:
+    def search1(self, test_np: utils.SharedNumpyArray, q: mp.Queue, cond: mp.Condition, process_id: int = 0) -> tuple[int, float]:
         # sync all process
         q.put(1)
         with cond:
@@ -53,7 +55,6 @@ class MultiProcessingSearchRunner:
             start_time = time.perf_counter()
             count = 0
             while time.perf_counter() < start_time + self.duration:
-                s = time.perf_counter()
                 try:
                     self.db.search_multiple_embedding(
                         test_data[idx:idx+self.nq],
@@ -69,17 +70,56 @@ class MultiProcessingSearchRunner:
                 # loop through the test data
                 idx = idx + self.nq if idx < num - self.nq else 0
 
-                if count % 500 == 0:
-                    log.debug(f"({mp.current_process().name:16}) search_count: {count}, latest_latency={time.perf_counter()-s}")
-                # if count == 2000:
-                #     log.info(f"({mp.current_process().name:16}) search_count: {count}, latest_latency={time.perf_counter()-s}, ending now.")
-                #     break
+        total_dur = round(time.perf_counter() - start_time, 4)
+
+        return (count, total_dur)
+
+    def search2(self, test_np: utils.SharedNumpyArray, q: mp.Queue, cond: mp.Condition, process_id: int = 0) -> tuple[int, float]:
+        # sync all process
+        q.put(1)
+        with cond:
+            cond.wait()
+
+        with self.db.init():
+            test_data = test_np.read().tolist()
+            num, idx = len(test_data) / self.nq, 0
+
+            start_time = time.perf_counter()
+            count = 0
+            intervals = [0.05, 0.045, 0.04, 0.035] # [, 0.039, 0.038, 0.037, 0.036, 0.035, 0.034, 0.033, 0.032, 0.03, 0.028, 0.026, 0.024] # [] # ,   0.0275, 0.025, 0.0225, 0.02
+            previous_interval = 0
+            window = 180
+            with ThreadPoolExecutor() as executor:
+                # while time.perf_counter() < start_time + self.duration:
+                while time.perf_counter() < start_time + window * len(intervals):
+                    # s = time.perf_counter()
+                    interval = intervals[int(int(time.perf_counter() - start_time) / window)]
+                    futures = []
+                    if interval != previous_interval:
+                        if process_id == 0:
+                            log.info(f"Now using interval {interval}, sending ~{int(1 / interval)} requests per second(total is {35 * int(1 / interval)})")
+                        previous_interval = interval
+                        [fut.result() for fut in futures]
+                        futures = []
+                        time.sleep(10)
+                    try:
+                        time.sleep(interval)
+                        fut = executor.submit(self.db.search_multiple_embedding,
+                            test_data[idx:idx+self.nq],
+                            self.k,
+                            self.filters,
+                        )
+                        futures.append(fut)
+                    except Exception as e:
+                        log.warning(f"VectorDB search_embedding error: {e}")
+                        traceback.print_exc(chain=True)
+                        raise e from None
+
+                    count += self.nq
+                    # loop through the test data
+                    idx = idx + self.nq if idx < num - self.nq else 0
 
         total_dur = round(time.perf_counter() - start_time, 4)
-        log.info(
-            f"{mp.current_process().name:16} search {self.duration}s: "
-            f"actual_dur={total_dur}s, count={count}, qps in this process: {round(count / total_dur, 4):3}"
-         )
 
         return (count, total_dur)
 
@@ -90,7 +130,11 @@ class MultiProcessingSearchRunner:
         return mp.get_context(mp_start_method)
 
     def _run_all_concurrencies_mem_efficient(self) -> float:
-        # return
+        # skip = True
+        skip = False
+        if skip:
+            log.info("Skip concurrent run")
+            return
         max_qps = 0
         try:
             for conc in self.concurrencies:
@@ -100,7 +144,7 @@ class MultiProcessingSearchRunner:
                     q, cond = m.Queue(), m.Condition()
                     with concurrent.futures.ProcessPoolExecutor(mp_context=self.get_mp_context(), max_workers=conc) as executor:
                         log.info(f"Start search {self.duration}s in concurrency {conc}, filters: {self.filters}")
-                        future_iter = [executor.submit(self.search, self.test_data, q, cond) for i in range(conc)]
+                        future_iter = [executor.submit(self.search1, self.test_data, q, cond, i) for i in range(conc)]
                         # Sync all processes
                         while q.qsize() < conc:
                             sleep_t = conc if conc < 10 else 10

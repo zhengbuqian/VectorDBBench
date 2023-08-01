@@ -5,6 +5,7 @@ import concurrent
 import multiprocessing as mp
 import math
 import psutil
+import random
 
 import numpy as np
 import pandas as pd
@@ -170,8 +171,6 @@ class SerialSearchRunner:
         self.ground_truth = ground_truth
 
     def search(self, args: tuple[list, pd.DataFrame]):
-        log.info(f"{mp.current_process().name:14} skip serial")
-        return (0, 0)
         log.info(f"{mp.current_process().name:14} start search the entire test_data to get recall and latency")
         with self.db.init():
             test_data, ground_truth = args
@@ -217,8 +216,33 @@ class SerialSearchRunner:
          )
         return (avg_recall, p99)
 
+    def search2(self, args: tuple[list, pd.DataFrame]):
+        log.info(f"{mp.current_process().name:14} start search the entire test_data to get recall and latency")
+        with self.db.init():
+            test_data, ground_truth = args
+            log.debug(f"test dataset size: {len(test_data)}")
+            log.debug(f"ground truth size: {ground_truth.columns}, shape: {ground_truth.shape}")
+            for i in range(1):
+                try:
+                    results = self.db.search_embedding(
+                        test_data[i],
+                        self.k,
+                        self.filters,
+                    )
+                except Exception as e:
+                    log.warning(f"VectorDB search_embedding error: {e}")
+                    traceback.print_exc(chain=True)
+                    raise e from None
+        log.info("Serial Done")
+        return (0, 0)
+
 
     def _run_in_subprocess(self) -> tuple[float, float]:
+        # skip = True
+        skip = False
+        if skip:
+            log.info(f"{mp.current_process().name:14} skip serial")
+            return (0, 0)
         with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
             future = executor.submit(self.search, (self.test_data, self.ground_truth))
             result = future.result()

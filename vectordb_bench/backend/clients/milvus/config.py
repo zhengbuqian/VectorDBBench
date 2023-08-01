@@ -56,6 +56,7 @@ class HNSWConfig(MilvusIndexConfig, DBCaseConfig):
         return {
             "metric_type": self.parse_metric(),
             "params": {"ef": self.ef},
+            "ignore_growing": True
         }
 
 

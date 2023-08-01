@@ -224,7 +224,7 @@ class BenchMarkRunner:
         children = psutil.Process().children(recursive=True)
         for p in  children:
             try:
-                log.warning(f"sending SIGTERM to child process: {p}")
+                # log.warning(f"sending SIGTERM to child process: {p}")
                 p.send_signal(sig)
             except psutil.NoSuchProcess:
                 pass
@@ -232,7 +232,7 @@ class BenchMarkRunner:
                                         callback=on_terminate)
 
         for p in alive:
-            log.warning(f"force killing child process: {p}")
+            # log.warning(f"force killing child process: {p}")
             p.kill()
 
 
